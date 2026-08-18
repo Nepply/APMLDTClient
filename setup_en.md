@@ -2,7 +2,7 @@
 This guide assumes you are using the North American version of the game, other vesions are untested.
 ## Setup
 
-1. Download and install [mldt.apworld and Pi.illomizer](https://github.com/MnL-Modding/Piillomizer/releases) and [mldtclient.apworld]() to play on azahar or a real 3ds.
+1. Download and install [mldt.apworld and Pi.illomizer](https://github.com/MnL-Modding/Piillomizer/releases) and [mldtclient.apworld](https://github.com/Nepply/APMLDTClient/releases) to play on azahar or a real 3ds.
 2. Generate the yaml in archipelago
 3. Change the settings in the yaml to fit how you want to play
 4. Generate the seed
