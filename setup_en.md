@@ -10,7 +10,7 @@ This guide assumes you are using the North American version of the game, other v
 6. Click "Open Dump" in the Pi'illomizer, then open your dump of Dream Team
 7. Change the settings you want. Note that starting with key items, mini/ball hop settings, and your second progressive hammer are set by the yaml, and thus do nothing in this program
 8. Click "Generate AP", then use the .bin in the folder from Step 5
-9. You will now have a folder with the game mod named the title id of your region's game. e.g `00040000000D5A00` if your folder gets named  `00040000000D5A00-ap0x0` rename it to your regions title id.
+9. You will now have a folder with the game mod named the title id of your region's game. e.g `00040000000D5A00`. (If your folder gets named  `00040000000D5A00-ap0x0` rename it to your regions title id.)
 
 ### Setup (Emulator)
 
