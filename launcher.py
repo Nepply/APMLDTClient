@@ -166,32 +166,52 @@ class StandaloneMLDTClient:
         #logger.info("StandaloneMLDTClient: validating ROM via Azahar adapter")
         try:
             probe_addr = 0x100000
-            print(f"StandaloneMLDTClient.validate_rom: reading System Bus at {probe_addr:#x}")
+            #print(f"StandaloneMLDTClient.validate_rom: reading System Bus at {probe_addr:#x}")
             #logger.info("StandaloneMLDTClient.validate_rom: reading System Bus at %#x", probe_addr)
             rom_info = await ctx.interface.read(probe_addr, 256)
             print(f"StandaloneMLDTClient.validate_rom: rom_info_len={len(rom_info)} first64={rom_info[:64].hex()}")
             #logger.info("StandaloneMLDTClient.validate_rom: System Bus bytes=%s", rom_info[:16].hex())
             #logger.info("StandaloneMLDTClient.validate_rom: rom_info_len=%d first64=%s", len(rom_info), rom_info[:64].hex())
 
-            if rom_info == bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 14 6E 00 1C 21 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 23 FF 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 1C FF 00 9F 00 24 24 37 04 E0 FD F1 22 EF 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00'):
-                self.ram_offset = 0x760BCD0
-                #logger.info("StandaloneMLDTClient.validate_rom: matched ROM header variant 1 -> ram_offset=%#x", self.ram_offset)
-            elif rom_info == bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 14 6E 00 24 21 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 09 FF 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 02 FF 00 9F 00 24 24 37 04 E0 FD F1 08 EF 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00'):
-                self.ram_offset = 0x760BCD0
-                #logger.info("StandaloneMLDTClient.validate_rom: matched ROM header variant 2 -> ram_offset=%#x", self.ram_offset)
-            elif rom_info == bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 24 6E 00 1C 31 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 FB FE 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 F4 FE 00 9F 00 24 24 37 04 E0 FD F1 FA EE 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00'):
-                self.ram_offset = 0x760ACD0
-                #logger.info("StandaloneMLDTClient.validate_rom: matched ROM header variant 3 -> ram_offset=%#x", self.ram_offset)
+            # These three byte strings are the known ROM header signatures for
+            # Dream Team. Variants 1 and 2 are both North America builds (they
+            # differ by a couple of bytes elsewhere in the header but share the
+            # same RAM layout); variant 3 is the PAL build. We wait for the full
+            # header read above to come back before we make any decision here,
+            # so we never guess an offset before we actually know which region
+            # (if any) we're looking at.
+            na_variant_1 = bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 14 6E 00 1C 21 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 23 FF 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 1C FF 00 9F 00 24 24 37 04 E0 FD F1 22 EF 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00')
+            na_variant_2 = bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 14 6E 00 24 21 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 09 FF 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 02 FF 00 9F 00 24 24 37 04 E0 FD F1 08 EF 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00')
+            pal_variant_1 = bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 24 6E 00 1C 31 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 FB FE 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 F4 FE 00 9F 00 24 24 37 04 E0 FD F1 FA EE 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00')
+
+            na_offset = AZAHAR_RAM_OFFSETS[TITLE_IDS["E"]]
+            pal_offset = AZAHAR_RAM_OFFSETS[TITLE_IDS["P"]]
+            detected_title_id = getattr(ctx, "title_id", TITLE_IDS["E"])
+            fallback_offset = AZAHAR_RAM_OFFSETS.get(detected_title_id, na_offset)
+
+            # Get the header result first, then pick NA or PAL based on it.
+            # Only once we know the header didn't match either known region do
+            # we fall back to a default (NA), and never before this point.
+            if rom_info in (na_variant_1, na_variant_2):
+                self.ram_offset = fallback_offset
+                #logger.info("StandaloneMLDTClient.validate_rom: matched NA ROM header -> ram_offset=%#x", self.ram_offset)
+                print(f"StandaloneMLDTClient.validate_rom: matched NA ROM header -> ram_offset={self.ram_offset}")
+            elif rom_info == pal_variant_1:
+                self.ram_offset = pal_offset
+                #logger.info("StandaloneMLDTClient.validate_rom: matched PAL ROM header -> ram_offset=%#x", self.ram_offset)
+                print(f"StandaloneMLDTClient.validate_rom: matched PAL ROM header -> ram_offset={self.ram_offset}")
             else:
-                print(f"StandaloneMLDTClient.validate_rom: ROM header did not match known MLDT signatures; first64={rom_info[:64].hex()}")
-                #logger.warning("StandaloneMLDTClient.validate_rom: ROM header did not match known MLDT signatures; first64=%s", rom_info[:64].hex())
-                self.ram_offset = 0x760BCD0
+                print(f"StandaloneMLDTClient.validate_rom: ROM header did not match known MLDT signatures; defaulting to NA; first64={rom_info[:64].hex()}")
+                #logger.warning("StandaloneMLDTClient.validate_rom: ROM header did not match known MLDT signatures; defaulting to NA; first64=%s", rom_info[:64].hex())
+                self.ram_offset = na_offset
                 #logger.warning("StandaloneMLDTClient.validate_rom: using MLDT fallback ram_offset=%#x", self.ram_offset)
         except Exception as e:
             print(f"Standalone validate_rom: adapter read failed: {e!r}")
             logger.warning("Standalone validate_rom: adapter read failed: %s", e)
             logger.debug("Standalone validate_rom: adapter read failed", exc_info=True)
-            self.ram_offset = 0x760BCD0
+            # The header read itself failed, so there's no result to wait on -
+            # default straight to NA here too.
+            self.ram_offset = AZAHAR_RAM_OFFSETS.get(getattr(ctx, "title_id", TITLE_IDS["E"]), AZAHAR_RAM_OFFSETS[TITLE_IDS["E"]])
             #logger.warning("StandaloneMLDTClient.validate_rom: using MLDT fallback ram_offset=%#x after exception", self.ram_offset)
 
         ctx.game = "Mario and Luigi Dream Team"
@@ -208,12 +228,12 @@ class StandaloneMLDTClient:
 
         # Calculate Azahar addresses from discovered block data address
         # Block data is at 0x6e7d88 in Azahar (NA), which corresponds to
-        # 0x760BCD0 + 0xB8 in BizHawk, so ram_offset = 0x6e7d88 - 0xB8 = 0x6e7cd0.
+        # 0x6e7cd0 + 0xB8 in BizHawk, so ram_offset = 0x6e7d88 - 0xB8 = 0x6e7cd0.
         # Other regions (e.g. PAL) put the same struct at a different base
-        # address, so look it up by the title id we actually connected to
-        # rather than assuming NA.
-        title_id = getattr(ctx, "title_id", TITLE_IDS["E"])
-        azahar_ram_offset = AZAHAR_RAM_OFFSETS.get(title_id, AZAHAR_RAM_OFFSETS[TITLE_IDS["E"]])
+        # address. Use the offset validate_rom already determined from the
+        # actual ROM header (self.ram_offset) rather than re-deriving it from
+        # the connected title id, which is what used to make this unreliable.
+        azahar_ram_offset = self.ram_offset
         azahar_item_write_addr = azahar_ram_offset + 0x43C + 0x51      # 0x6e815d
         azahar_item_count_low = azahar_ram_offset + 0x43C + 0x4D      # 0x6e8159
         azahar_item_count_high = azahar_ram_offset + 0x43C + 0x4E     # 0x6e815a
@@ -250,7 +270,9 @@ class StandaloneMLDTClient:
                 # know whether a save is loaded and how long it's been loaded for.
                 try:
                     file_load_byte = await ctx.interface.read(azahar_file_loaded_addr, 1)
-                    file_has_loaded = int.from_bytes(file_load_byte, byteorder='little') != 0
+                    # The save-loaded state is bit 3. Other bits in this byte
+                    # can remain set while an existing save is being loaded.
+                    file_has_loaded = (int.from_bytes(file_load_byte, byteorder='little') >> 3) % 2
                     if file_has_loaded != self.file_loaded_flag:
                         #.debug("file_has_loaded changed: %s load_byte=%s", file_has_loaded, file_load_byte.hex())
                         if file_has_loaded:
@@ -411,6 +433,8 @@ class StandaloneMLDTClient:
                                 location_name_val = self.location_names[location_id]
                                 if location_name_val > -1 and location_name_val not in self.block_sent_locations:
                                     #logger.info("Detected location check in emulator: location_index=%d -> location_id=%s", location_id, location_name_val)
+                                    #logger.info("Location address: byte=%d bit=%d prev_byte=%s new_byte=%s", b, bit, format(parsed_prev_data[b], '#04x'), format(parsed_block_data[b], '#04x'))
+                                    #logger.info("Full block address: %#x", azahar_block_data_addr)
                                     await ctx.check_locations([location_name_val])
                                     self.block_sent_locations.add(location_name_val)
 
@@ -601,12 +625,11 @@ async def game_watcher(ctx: MLDTClientContext, title_id, connect_addr: str) -> N
                 await asyncio.sleep(delay)
                 ctx.initial_delay = False
 
-            ok = await handler.validate_rom(ctx)
-            if not ok:
-                #logger.warning("ROM validation reported failure; using known-good Dream Team RAM base and continuing")
-                handler.ram_offset = 0x760BCD0
-            #else:
-                #logger.info("ROM validation succeeded; ram_offset=%#x", handler.ram_offset)
+            # validate_rom always waits for the header read and sets
+            # handler.ram_offset itself (NA, PAL, or a NA default if neither
+            # matched) before returning, so there's nothing left to default
+            # here afterward.
+            await handler.validate_rom(ctx)
 
             try:
                 if ctx.server is not None and not ctx.server.socket.closed and ctx.auth is None:

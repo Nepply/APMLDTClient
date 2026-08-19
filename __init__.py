@@ -3,7 +3,7 @@ try:
 except ModuleNotFoundError:
     Component = Type = None
     components = []
-    icon_paths = None 
+    icon_paths = None  
 
 from .client import N3DSAdapter, create_n3ds_mldt_client
 
@@ -15,7 +15,7 @@ if Component is not None and Type is not None:
         from .launcher import launch
         launch_subprocess(launch, name="MLDTClient", args=args)
 
-   
+
     if icon_paths is not None:
         icon_paths["mldticon"] = f"ap:{__name__}/data/mldticon.png"
 
