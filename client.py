@@ -87,6 +87,10 @@ if True:
             self.id = 0
             self.max_request_size = 32
             self.sock = None
+            # Set by _set_process() to the title id that was actually matched,
+            # e.g. so the caller can tell NA vs PAL apart after an auto-detect
+            # connect() call that was given multiple candidate title ids.
+            self.connected_title_id = None
 
         def _max_read_size(self) -> int:
             return self.max_request_size
@@ -121,23 +125,32 @@ if True:
                     continue
             raise ConnectionError("Lost connection to game")
 
-        async def _set_process(self, title: int) -> bool:
+        async def _set_process(self, titles) -> bool:
+            # `titles` may be a single title id (int) or an iterable of
+            # acceptable title ids -- e.g. all known regions -- so we can
+            # match whichever region build is actually running instead of
+            # requiring the caller to guess the right one up front.
+            if isinstance(titles, int):
+                titles = {titles}
+            else:
+                titles = set(titles)
+            self.connected_title_id = None
             start_process = 0
             while True:
                 request_data = struct.pack("=II", start_process, 0x7fffffff)
                 try:
                     response = await self._send_packet(3, request_data, retry=False)
                     if len(response) < 4:
-                        #print(f"N3DSAdapter._set_process: no process list returned for target title {title:#x}; game not ready yet")
-                        #logger.warning("N3DSAdapter._set_process: no process list returned; game not ready for title %#x", title)
+                        #print(f"N3DSAdapter._set_process: no process list returned for target titles {[f'{t:#x}' for t in titles]}; game not ready yet")
+                        #logger.warning("N3DSAdapter._set_process: no process list returned; game not ready for titles %s", titles)
                         self.max_request_size = 32
                         return False
                     count = struct.unpack("=I", response[0:4])[0]
-                    #print(f"N3DSAdapter._set_process: target={title:#x} process_count={count} raw={response[:64].hex()}")
-                    #logger.info("N3DSAdapter._set_process: title=%#x reported process_count=%d", title, count)
+                    #print(f"N3DSAdapter._set_process: targets={titles} process_count={count} raw={response[:64].hex()}")
+                    #logger.info("N3DSAdapter._set_process: titles=%s reported process_count=%d", titles, count)
                     if count == 0:
-                        #print(f"N3DSAdapter._set_process: bridge reported zero running processes for title {title:#x}")
-                        #logger.warning("N3DSAdapter._set_process: bridge reported zero running processes for title %#x", title)
+                        #print(f"N3DSAdapter._set_process: bridge reported zero running processes for titles {titles}")
+                        #logger.warning("N3DSAdapter._set_process: bridge reported zero running processes for titles %s", titles)
                         return False
                     start_process += count
                     for i in range(count):
@@ -150,22 +163,26 @@ if True:
                         # used the wrong 16-byte layout and caused the unpack error.
                         proc_id, title_id, proc_name = struct.unpack("<IQ8s", entry)
                         proc_name = proc_name.rstrip(b"\x00").decode("ascii", errors="replace")
-                        print(f"N3DSAdapter._set_process: candidate proc_id={proc_id} title_id={title_id:#x} process_name={proc_name!r} target={title:#x}")
-                        #logger.info("N3DSAdapter._set_process: candidate proc_id=%d title_id=%#x process_name=%s target=%#x", proc_id, title_id, proc_name, title)
-                        if title_id == title:
+                        print(f"N3DSAdapter._set_process: candidate proc_id={proc_id} title_id={title_id:#x} process_name={proc_name!r} targets={[f'{t:#x}' for t in titles]}")
+                        #logger.info("N3DSAdapter._set_process: candidate proc_id=%d title_id=%#x process_name=%s targets=%s", proc_id, title_id, proc_name, titles)
+                        if title_id in titles:
                             request_data = struct.pack("=II", 1, proc_id)
-                            print(f"N3DSAdapter._set_process: selecting proc_id={proc_id} for title {title:#x}")
-                            #logger.info("N3DSAdapter._set_process: selecting proc_id=%d for title %#x", proc_id, title)
+                            print(f"N3DSAdapter._set_process: selecting proc_id={proc_id} for title {title_id:#x}")
+                            #logger.info("N3DSAdapter._set_process: selecting proc_id=%d for title %#x", proc_id, title_id)
                             await self._send_packet(4, request_data, 0)
                             self.max_request_size = 1024
+                            self.connected_title_id = title_id
                             return True
                 except ConnectionError:
-                    print(f"N3DSAdapter._set_process: lost connection while selecting process for title {title:#x}")
-                    logger.warning("N3DSAdapter._set_process: lost connection while selecting process for title %#x", title)
+                    print(f"N3DSAdapter._set_process: lost connection while selecting process for titles {[f'{t:#x}' for t in titles]}")
+                    logger.warning("N3DSAdapter._set_process: lost connection while selecting process for titles %s", titles)
                     self.max_request_size = 32
                     return True
 
-        async def connect(self, address: str, title: int) -> bool:
+        async def connect(self, address: str, title) -> bool:
+            # `title` may be a single title id (int) or an iterable of
+            # candidate title ids to auto-detect the running region from
+            # (see _set_process()).
             # close previous socket if any
             try:
                 self.disconnect()

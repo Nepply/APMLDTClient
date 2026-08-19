@@ -24,12 +24,12 @@ is_3ds = False
 # How long to wait after a save file is detected as loaded before we start
 # trusting game memory / sending items. Gives the game time to finish its
 # own loading/initialization so we don't write items too early.
-FILE_LOAD_SETTLE_DELAY = 9
+FILE_LOAD_SETTLE_DELAY = 10
 
 
 class MLDTCommandProcessor(ClientCommandProcessor):
     def _cmd_3ds(self, address: str):
-        """Connect to a real 3DS via the ALBW-style UDP bridge."""
+        """Connect to a real 3DS"""
         global triple_addr
         if triple_addr == "":
             triple_addr = address
@@ -162,14 +162,14 @@ class StandaloneMLDTClient:
         memory, we still keep the known-good Dream Team base and continue. The
         goal is a working client, not a perfect BizHawk-compatible ROM validator.
         """
-        #print("StandaloneMLDTClient: validating ROM via Azahar adapter")
+        print("StandaloneMLDTClient: validating ROM via Azahar adapter")
         #logger.info("StandaloneMLDTClient: validating ROM via Azahar adapter")
         try:
             probe_addr = 0x100000
-            #print(f"StandaloneMLDTClient.validate_rom: reading System Bus at {probe_addr:#x}")
+            print(f"StandaloneMLDTClient.validate_rom: reading System Bus at {probe_addr:#x}")
             #logger.info("StandaloneMLDTClient.validate_rom: reading System Bus at %#x", probe_addr)
             rom_info = await ctx.interface.read(probe_addr, 256)
-            #print(f"StandaloneMLDTClient.validate_rom: rom_info_len={len(rom_info)} first64={rom_info[:64].hex()}")
+            print(f"StandaloneMLDTClient.validate_rom: rom_info_len={len(rom_info)} first64={rom_info[:64].hex()}")
             #logger.info("StandaloneMLDTClient.validate_rom: System Bus bytes=%s", rom_info[:16].hex())
             #logger.info("StandaloneMLDTClient.validate_rom: rom_info_len=%d first64=%s", len(rom_info), rom_info[:64].hex())
 
@@ -183,14 +183,14 @@ class StandaloneMLDTClient:
                 self.ram_offset = 0x760ACD0
                 #logger.info("StandaloneMLDTClient.validate_rom: matched ROM header variant 3 -> ram_offset=%#x", self.ram_offset)
             else:
-                #print(f"StandaloneMLDTClient.validate_rom: ROM header did not match known MLDT signatures; first64={rom_info[:64].hex()}")
-                logger.warning("StandaloneMLDTClient.validate_rom: ROM header did not match known MLDT signatures; first64=%s", rom_info[:64].hex())
+                print(f"StandaloneMLDTClient.validate_rom: ROM header did not match known MLDT signatures; first64={rom_info[:64].hex()}")
+                #logger.warning("StandaloneMLDTClient.validate_rom: ROM header did not match known MLDT signatures; first64=%s", rom_info[:64].hex())
                 self.ram_offset = 0x760BCD0
                 #logger.warning("StandaloneMLDTClient.validate_rom: using MLDT fallback ram_offset=%#x", self.ram_offset)
         except Exception as e:
-            #print(f"Standalone validate_rom: adapter read failed: {e!r}")
-            #logger.warning("Standalone validate_rom: adapter read failed: %s", e)
-            #logger.debug("Standalone validate_rom: adapter read failed", exc_info=True)
+            print(f"Standalone validate_rom: adapter read failed: {e!r}")
+            logger.warning("Standalone validate_rom: adapter read failed: %s", e)
+            logger.debug("Standalone validate_rom: adapter read failed", exc_info=True)
             self.ram_offset = 0x760BCD0
             #logger.warning("StandaloneMLDTClient.validate_rom: using MLDT fallback ram_offset=%#x after exception", self.ram_offset)
 
@@ -204,13 +204,16 @@ class StandaloneMLDTClient:
         try:
             import worlds._bizhawk as bizhawk
         except Exception:
-            #logger.debug("Standalone watcher: bizhawk shim missing", exc_info=True)
             return
 
         # Calculate Azahar addresses from discovered block data address
-        # Block data is at 0x6e7d88 in Azahar, which corresponds to 0x760BCD0 + 0xB8 in BizHawk
-        # So the ram_offset equivalent in Azahar is: 0x6e7d88 - 0xB8 = 0x6e7cd0
-        azahar_ram_offset = 0x6e7cd0
+        # Block data is at 0x6e7d88 in Azahar (NA), which corresponds to
+        # 0x760BCD0 + 0xB8 in BizHawk, so ram_offset = 0x6e7d88 - 0xB8 = 0x6e7cd0.
+        # Other regions (e.g. PAL) put the same struct at a different base
+        # address, so look it up by the title id we actually connected to
+        # rather than assuming NA.
+        title_id = getattr(ctx, "title_id", TITLE_IDS["E"])
+        azahar_ram_offset = AZAHAR_RAM_OFFSETS.get(title_id, AZAHAR_RAM_OFFSETS[TITLE_IDS["E"]])
         azahar_item_write_addr = azahar_ram_offset + 0x43C + 0x51      # 0x6e815d
         azahar_item_count_low = azahar_ram_offset + 0x43C + 0x4D      # 0x6e8159
         azahar_item_count_high = azahar_ram_offset + 0x43C + 0x4E     # 0x6e815a
@@ -249,10 +252,9 @@ class StandaloneMLDTClient:
                     file_load_byte = await ctx.interface.read(azahar_file_loaded_addr, 1)
                     file_has_loaded = int.from_bytes(file_load_byte, byteorder='little') != 0
                     if file_has_loaded != self.file_loaded_flag:
-                        logger.debug("file_has_loaded changed: %s load_byte=%s", file_has_loaded, file_load_byte.hex())
+                        #.debug("file_has_loaded changed: %s load_byte=%s", file_has_loaded, file_load_byte.hex())
                         if file_has_loaded:
-                            # A save was just selected/loaded. Wait a bit before we
-                            # start trusting game memory / sending items so the game
+                            # A save was just selected/loaded. Wait a bit so it
                             # has time to finish loading everything properly.
                             self.file_loaded_time = time.time()
                             #logger.info("Save file loaded; waiting %ds before syncing items", FILE_LOAD_SETTLE_DELAY)
@@ -263,7 +265,7 @@ class StandaloneMLDTClient:
                     file_has_loaded = 0
                     self.file_loaded_flag = False
                     self.file_loaded_time = None
-                    logger.debug("file_has_loaded read failed", exc_info=True)
+                    #logger.debug("file_has_loaded read failed", exc_info=True)
 
                 items_ready = bool(
                     file_has_loaded
@@ -271,11 +273,6 @@ class StandaloneMLDTClient:
                     and (time.time() - self.file_loaded_time) >= FILE_LOAD_SETTLE_DELAY
                 )
 
-                # Handle outgoing items -> write to emulator via Azahar.
-                # ALBW does not trust the client-side counter alone: it treats the
-                # emulator-owned received-item count as authoritative and only writes
-                # the delta that is still missing. This avoids replaying already-processed
-                # items after reconnects or when the game was already advanced.
                 if items_ready:
                     try:
                         game_received_count = int.from_bytes(await ctx.interface.read(azahar_item_count_low, 1), byteorder='little') + (
@@ -307,18 +304,18 @@ class StandaloneMLDTClient:
                                 #logger.debug("item write targets: addr=%#x count_low=%#x count_high=%#x", azahar_item_write_addr, azahar_item_count_low, azahar_item_count_high)
                                 #logger.debug("Attempting write: addr=%#x data=%s", azahar_item_write_addr, bytes([to_write]).hex())
                                 # read-before for diagnostics
-                                try:
-                                    before = await ctx.interface.read(azahar_item_write_addr, 1)
-                                    logger.debug("Before write at %#x: %s", azahar_item_write_addr, before.hex())
-                                except Exception:
-                                    logger.debug("Read-before failed", exc_info=True)
+                                #try:
+                                    #before = await ctx.interface.read(azahar_item_write_addr, 1)
+                                    #logger.debug("Before write at %#x: %s", azahar_item_write_addr, before.hex())
+                                #except Exception:
+                                    #logger.debug("Read-before failed", exc_info=True)
                                 await ctx.interface.write(azahar_item_write_addr, bytes([to_write]))
                                 # verify write by reading back
-                                try:
-                                    read_back = await ctx.interface.read(azahar_item_write_addr, 1)
+                                #try:
+                                    #read_back = await ctx.interface.read(azahar_item_write_addr, 1)
                                     #logger.info("Wrote %s to %#x, read-back=%s", to_write, azahar_item_write_addr, read_back.hex())
-                                except Exception:
-                                    logger.debug("Read-back failed after write", exc_info=True)
+                                #except Exception:
+                                    #logger.debug("Read-back failed after write", exc_info=True)
                                 self.current_items_received += 1
                                 await ctx.interface.write(azahar_item_count_low, bytes([self.current_items_received % 0x100]))
                                 await ctx.interface.write(azahar_item_count_high, bytes([self.current_items_received // 0x100]))
@@ -329,8 +326,8 @@ class StandaloneMLDTClient:
                         has_been_reset = int.from_bytes(await ctx.interface.read(azahar_item_write_addr, 1), byteorder='little')
                         if has_been_reset == 0:
                             self.receive_buffer -= 1
-                else:
-                    logger.debug("Save file not yet settled; holding off on item sync")
+                #else:
+                    #logger.debug("Save file not yet settled; holding off on item sync")
 
                 if not file_has_loaded and (self.prev_data or self.shop_on):
                     #logger.debug("Emulator/game not loaded; resetting stale block/shop scan state")
@@ -367,7 +364,7 @@ class StandaloneMLDTClient:
                             self.prev_shop = await ctx.interface.read(azahar_shop_data_addr, 20)
                             #logger.debug("shop init: prev_shop=%s", self.prev_shop.hex())
                     else:
-                        logger.debug("shop init: shop disabled; clearing prev_shop and shop_on")
+                        #logger.debug("shop init: shop disabled; clearing prev_shop and shop_on")
                         self.shop_on = False
                         self.prev_shop = 0
 
@@ -454,13 +451,13 @@ class StandaloneMLDTClient:
                                     location_index = 3000 + (s * 8) + bit + 1
                                     if location_index in self.shop_sent_locations:
                                         continue
-                                    #logger.debug("Detected shop check in emulator: shop_index=%d byte=%d bit=%d prev_byte=%s new_byte=%s", location_index, s, bit, format(parsed_prev_shop[s], '#04x'), format(parsed_shop_data[s], '#04x'))
+                                    logger.debug("Detected shop check in emulator: shop_index=%d byte=%d bit=%d prev_byte=%s new_byte=%s", location_index, s, bit, format(parsed_prev_shop[s], '#04x'), format(parsed_shop_data[s], '#04x'))
                                     await ctx.check_locations([location_index])
                                     self.shop_sent_locations.add(location_index)
-                    if not shop_delta and self.shop_debug_counter % 20 == 0:
-                        logger.debug("shop debug: shop_on=True, no byte delta detected, prev_shop=%s", bytes(parsed_prev_shop).hex())
-                else:
-                    logger.debug("shop debug: shop_on=False, skipping shop scan")
+                    #if not shop_delta and self.shop_debug_counter % 20 == 0:
+                        #logger.debug("shop debug: shop_on=True, no byte delta detected, prev_shop=%s", bytes(parsed_prev_shop).hex())
+                #else:
+                    #logger.debug("shop debug: shop_on=False, skipping shop scan")
 
                 # report when Dreamy Bowser has been beaten.
                 has_goaled = (int.from_bytes(await ctx.interface.read(azahar_goal_addr, 1), byteorder='little') >> 1) % 2
@@ -489,7 +486,7 @@ class StandaloneMLDTClient:
                 ctx.connect_notice_shown = False
                 raise
             except Exception:
-                logger.debug("StandaloneMLDTClient.game_watcher loop error", exc_info=True)
+                #logger.debug("StandaloneMLDTClient.game_watcher loop error", exc_info=True)
                 ctx.interface_connected = False
                 try:
                     ctx.interface.disconnect()
@@ -509,6 +506,14 @@ TITLE_IDS = {
     "K": 0x00040000000FCD00,
 }
 
+# The Azahar linear-heap base address for the MLDT save-state block differs
+# per game region/build. Keyed by title id; falls back to the NA (E) offset
+# for any region we don't have a confirmed offset for yet.
+AZAHAR_RAM_OFFSETS = {
+    TITLE_IDS["E"]: 0x6e7cd0,
+    TITLE_IDS["P"]: 0x6E8CD0,
+}
+
 
 class MLDTClientContext(CommonContext):
     command_processor = MLDTCommandProcessor
@@ -526,14 +531,18 @@ class MLDTClientContext(CommonContext):
         self.show_citra_connect_message = True
         self.show_triple_connected_message = True
         self.connect_notice_shown = False
+        self.title_id = TITLE_IDS["E"]
 
 
-async def game_watcher(ctx: MLDTClientContext, title_id: int, connect_addr: str) -> None:
+async def game_watcher(ctx: MLDTClientContext, title_id, connect_addr: str) -> None:
     """Minimal Azahar Dream Team watcher.
 
     This client intentionally avoids the BizHawk shim and the full MLDT runtime.
     We connect to the emulator bridge, validate the game process, then use the
     adapter directly for the few reads/writes the game state needs.
+
+    `title_id` may be a single title id (region forced via --title) or a set
+    of candidate title ids to auto-detect the running region from.
     """
     global triple_addr, is_3ds
     handler = StandaloneMLDTClient()
@@ -559,6 +568,9 @@ async def game_watcher(ctx: MLDTClientContext, title_id: int, connect_addr: str)
                         ctx.interface_connected = True
                         ctx.show_citra_connect_message = False
                         ctx.show_triple_connected_message = False
+                        detected_title_id = getattr(ctx.interface, "connected_title_id", None)
+                        if detected_title_id is not None:
+                            ctx.title_id = detected_title_id
                     else:
                         logger.info("Couldn't connect to 3ds.")
                         ctx.interface_connected = False
@@ -579,7 +591,10 @@ async def game_watcher(ctx: MLDTClientContext, title_id: int, connect_addr: str)
                         continue
                     ctx.interface_connected = True
                     ctx.initial_delay = True
-                    logger.info("Emulator connected!")
+                    detected_title_id = getattr(ctx.interface, "connected_title_id", None)
+                    if detected_title_id is not None:
+                        ctx.title_id = detected_title_id
+                    logger.info("Emulator connected! (title_id=%#x)", ctx.title_id)
 
             if ctx.initial_delay:
                 delay = 5 if is_3ds else 1
@@ -588,7 +603,7 @@ async def game_watcher(ctx: MLDTClientContext, title_id: int, connect_addr: str)
 
             ok = await handler.validate_rom(ctx)
             if not ok:
-                logger.warning("ROM validation reported failure; using known-good Dream Team RAM base and continuing")
+                #logger.warning("ROM validation reported failure; using known-good Dream Team RAM base and continuing")
                 handler.ram_offset = 0x760BCD0
             #else:
                 #logger.info("ROM validation succeeded; ram_offset=%#x", handler.ram_offset)
@@ -596,10 +611,11 @@ async def game_watcher(ctx: MLDTClientContext, title_id: int, connect_addr: str)
             try:
                 if ctx.server is not None and not ctx.server.socket.closed and ctx.auth is None:
                     await ctx.get_username()
-                    logger.info("Authenticated with emulator, sending Connect to server")
+                    #logger.info("Authenticated with emulator, sending Connect to server")
                     await ctx.send_connect(name=ctx.auth)
             except Exception:
-                logger.debug("Failed to send Connect after ROM validation", exc_info=True)
+                #logger.debug("Failed to send Connect after ROM validation", exc_info=True)
+                pass
 
             if not ctx.interface_connected:
                 continue
@@ -637,34 +653,41 @@ def launch(*launch_args) -> None:
         parser.add_argument("patch_file", default="", type=str, nargs="?",
                             help="Path to an Archipelago patch file")
         parser.add_argument("--title", default="", type=str,
-                            help="Explicit TITLE_ID hex (optional)")
+                            help="Region letter (E=NA, P=PAL, J=JP, K=KR) or an explicit TITLE_ID hex")
         parser.add_argument("--addr", default="127.0.0.1", type=str,
                             help="Emulator connector address (default 127.0.0.1)")
         args = parser.parse_args(launch_args)
 
-        # Determine title id
-        title_id = 0
+        # Determine which title id(s) to connect against.
+        # If the user explicitly named a region (or gave a raw hex title id),
+        # only match that one. Otherwise auto-detect by accepting any known
+        # region and using whichever one is actually running in the emulator.
+        connect_title_id = None
+        default_title_id = TITLE_IDS.get("E", 0)
         if args.title:
-            try:
-                title_id = int(args.title, 16)
-            except Exception:
-                title_id = int(args.title)
-        elif args.patch_file:
-            # Try to infer from patch file path using parent folder name containing TITLE_ID
-            parent = os.path.dirname(args.patch_file)
-            # fallback: use default NA E
-            title_id = TITLE_IDS.get("E", 0)
+            region_key = args.title.strip().upper()
+            if region_key in TITLE_IDS:
+                connect_title_id = TITLE_IDS[region_key]
+            else:
+                try:
+                    connect_title_id = int(args.title, 16)
+                except Exception:
+                    connect_title_id = int(args.title)
+            default_title_id = connect_title_id
         else:
-            title_id = TITLE_IDS.get("E", 0)
+            # Auto-detect: accept any known region's title id, and figure out
+            # which one actually connected from ctx.interface.connected_title_id.
+            connect_title_id = set(TITLE_IDS.values())
 
         ctx = MLDTClientContext(args.connect, args.password)
+        ctx.title_id = default_title_id
         ctx.server_task = asyncio.create_task(server_loop(ctx), name="ServerLoop")
 
         if gui_enabled:
             ctx.run_gui()
         ctx.run_cli()
 
-        watcher_task = asyncio.create_task(game_watcher(ctx, title_id, args.addr), name="GameWatcher")
+        watcher_task = asyncio.create_task(game_watcher(ctx, connect_title_id, args.addr), name="GameWatcher")
 
         try:
             await watcher_task
