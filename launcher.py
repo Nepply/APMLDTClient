@@ -3,23 +3,188 @@
 This launcher creates a `CommonContext`-based context, attaches the `N3DSAdapter`
 and runs the `MLDTClient.game_watcher` loop so the client can be used with emulators
 that expose memory over the same addresses (e.g., Azahar/Citra bridges).
-
-Usage: call `launch()` which mirrors other apworld client launchers.
 """
 
 from typing import Optional
 import asyncio
 import logging
 import os
+import socket
+import struct
 import time
 import traceback
 
 from CommonClient import ClientCommandProcessor, CommonContext, get_base_parser, server_loop, gui_enabled, logger
 from NetUtils import ClientStatus
-from .client import ConnectionError, N3DSAdapter, to_azahar_addr
 
 triple_addr = ""
 is_3ds = False
+
+
+class ConnectionError(Exception):
+    pass
+
+
+class N3DSAdapter:
+    """
+    Implements the packet protocol used by Azahar/Citra N3DS memory bridges:
+    - UDP port 45987
+    - packet header (version, id, type, len)
+    - process selection and read/write semantics
+    """
+
+    PACKET_VERSION: int = 1
+    HEADER_SIZE: int = 0x10
+    MAX_PACKET_SIZE: int = 0x410
+    TIMEOUT: float = 1.0
+
+    def __init__(self) -> None:
+        self.id = 0
+        self.max_request_size = 32
+        self.sock = None
+        # Set by _set_process() to the title id that was actually matched,
+        # e.g. so the caller can tell NA vs PAL apart after an auto-detect
+        # connect() call that was given multiple candidate title ids.
+        self.connected_title_id = None
+
+    def _max_read_size(self) -> int:
+        return self.max_request_size
+
+    def _max_write_size(self) -> int:
+        return self.max_request_size - 8
+
+    async def _send_packet(self, request_type: int, request_data: bytes, response_size: Optional[int] = None, retry: bool = True) -> bytes:
+        loop = asyncio.get_running_loop()
+        tries = 4 if retry else 1
+        for _ in range(tries):
+            try:
+                request_id = self.id
+                self.id = (self.id + 1) & 0xffffffff
+                request = struct.pack("=IIII", self.PACKET_VERSION, request_id, request_type, len(request_data))
+                request += request_data
+                await asyncio.wait_for(loop.sock_sendall(self.sock, request), self.TIMEOUT)
+                for _ in range(16):
+                    response = await asyncio.wait_for(loop.sock_recv(self.sock, self.MAX_PACKET_SIZE), self.TIMEOUT)
+                    if not response or len(response) < self.HEADER_SIZE:
+                        break
+                    try:
+                        version, id, response_type, size = struct.unpack("=IIII", response[:self.HEADER_SIZE])
+                    except Exception as e:
+                        logger.debug("_send_packet: bad header unpack: %s", e)
+                        continue
+                    if version == self.PACKET_VERSION and id == request_id and response_type == request_type:
+                        return response[self.HEADER_SIZE:]
+            except Exception:
+                continue
+        raise ConnectionError("Lost connection to game")
+
+    async def _set_process(self, titles) -> bool:
+        # `titles` may be a single title id (int) or an iterable of
+        # acceptable title ids -- e.g. all known regions -- so we can
+        # match whichever region build is actually running instead of
+        # requiring the caller to guess the right one up front.
+        if isinstance(titles, int):
+            titles = {titles}
+        else:
+            titles = set(titles)
+        self.connected_title_id = None
+        start_process = 0
+        while True:
+            request_data = struct.pack("=II", start_process, 0x7fffffff)
+            try:
+                response = await self._send_packet(3, request_data, retry=False)
+                if len(response) < 4:
+                    self.max_request_size = 32
+                    return False
+                count = struct.unpack("=I", response[0:4])[0]
+                if count == 0:
+                    return False
+                start_process += count
+                for i in range(count):
+                    entry = response[4 + i * 0x14 : 4 + (i + 1) * 0x14]
+                    if len(entry) < 0x14:
+                        break
+                    # Azahar/Citra process entries are laid out as:
+                    #   <proc_id: I, title_id: Q, proc_name: 8s>
+                    # for a total of 20 bytes (0x14).
+                    proc_id, title_id, proc_name = struct.unpack("<IQ8s", entry)
+                    proc_name = proc_name.rstrip(b"\x00").decode("ascii", errors="replace")
+                    print(f"N3DSAdapter._set_process: candidate proc_id={proc_id} title_id={title_id:#x} process_name={proc_name!r} targets={[f'{t:#x}' for t in titles]}")
+                    if title_id in titles:
+                        request_data = struct.pack("=II", 1, proc_id)
+                        print(f"N3DSAdapter._set_process: selecting proc_id={proc_id} for title {title_id:#x}")
+                        await self._send_packet(4, request_data, 0)
+                        self.max_request_size = 1024
+                        self.connected_title_id = title_id
+                        return True
+            except ConnectionError:
+                print(f"N3DSAdapter._set_process: lost connection while selecting process for titles {[f'{t:#x}' for t in titles]}")
+                #logger.warning("N3DSAdapter._set_process: lost connection while selecting process for titles %s", titles)
+                self.max_request_size = 32
+                return True
+
+    async def connect(self, address: str, title) -> bool:
+        # `title` may be a single title id (int) or an iterable of
+        # candidate title ids to auto-detect the running region from
+        # (see _set_process()).
+        try:
+            self.disconnect()
+        except Exception:
+            pass
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Use ALBW default port 45987
+        host = address
+        port = 45987
+        if isinstance(address, str) and ":" in address:
+            parts = address.rsplit(":", 1)
+            host = parts[0]
+            try:
+                port = int(parts[1])
+            except Exception:
+                port = 45987
+        self.sock.connect((host, port))
+        self.sock.setblocking(False)
+        try:
+            await self._send_packet(0, b"", 0)
+            return await self._set_process(title)
+        except ConnectionError:
+            return False
+
+    def disconnect(self):
+        if hasattr(self, 'sock') and self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+
+    async def read(self, address: int, size: int) -> bytes:
+        # NOTE: no address translation here. This adapter is used with real
+        # process addresses (e.g. from CTRPluginFramework), not
+        # BizHawk-relative FCRAM offsets.
+        mem = b""
+        while size > 0:
+            request_size = min(size, self._max_read_size())
+            request_data = struct.pack("=II", address, request_size)
+            mem += await self._send_packet(1, request_data, request_size)
+            address += request_size
+            size -= request_size
+        return mem
+
+    async def write(self, address: int, data: bytes) -> None:
+        # See note in read() above -- no address translation here either.
+        start = 0
+        while start < len(data):
+            end = min(start + self._max_write_size(), len(data))
+            request_data = struct.pack("=II", address + start, end - start)
+            request_data += data[start:end]
+            await self._send_packet(2, request_data, 0, retry=False)
+            start += self._max_write_size()
+
+    async def read_u32(self, address: int) -> int:
+        return int.from_bytes(await self.read(address, 4), "little")
+
+    async def write_u32(self, address: int, value: int) -> None:
+        await self.write(address, value.to_bytes(4, "little"))
 
 # How long to wait after a save file is detected as loaded before we start
 # trusting game memory / sending items. Gives the game time to finish its

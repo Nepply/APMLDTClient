@@ -5,11 +5,6 @@ except ModuleNotFoundError:
     components = []
     icon_paths = None  
 
-from .client import N3DSAdapter, create_n3ds_mldt_client
-
-__all__ = ["N3DSAdapter", "create_n3ds_mldt_client"]
-
-
 if Component is not None and Type is not None:
     def launch_client(*args):
         from .launcher import launch
