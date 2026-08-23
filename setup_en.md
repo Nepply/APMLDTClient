@@ -42,6 +42,7 @@ This guide assumes you are using the North American version of the game, other v
 ### Playing a Game (3DS)
 
 1. Run Mario & Luigi Dream team. At the end of the red 3DS loading screen, you should see a blue flash. This means the plugin has loaded successfully.
-2. Run the command on-screen into your Mario & Luigi Dream Team client.
-3. Enter the server URL into the client and press Connect. Enter your slot name.
-4. Enjoy
+2. Open the Mario & Luigi Dream Team client found in the Archipelago Launcher.
+3. Run the command on-screen into your Mario & Luigi Dream Team client.
+5. Enter the server URL into the client and press Connect. Enter your slot name.
+6. Enjoy
