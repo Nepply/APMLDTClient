@@ -21,10 +21,8 @@ from Utils import async_start
 
 # DeathLink memory offsets, relative to `self.deathlink_ram_offset` (NOT the
 # `azahar_ram_offset`/`self.ram_offset` used for item/shop/block scanning in
-# StandaloneMLDTClient.game_watcher -- the DeathLink struct shifts between NA
-# and PAL by a different amount than that one does, so it gets its own base;
-# see DEATHLINK_RAM_OFFSETS). These constants themselves are calibrated to NA
-# and are region-independent -- only the base differs per region.
+# StandaloneMLDTClient.game_watcher the DeathLink struct shifts between NA
+# and PAL by a different amount than that one does, so it gets its own base.
 #
 # Kill method: rather than writing the is-dead flag directly, we force "hero wear"
 # onto a bro and push his turn counter to the kill threshold. The game itself then
@@ -45,6 +43,9 @@ DEATHLINK_KILL_TURN_COUNT = 4               # turn count that triggers the kill 
 DEATHLINK_ARM_DELAY_SECONDS = 1.5           # wait this long after a battle starts before writing wear/turn
 
 DEATHLINK_MODES = ("gameover", "randombro", "singlebro")
+
+#Used to see if the player is in a menu. Address is the same across regions seemingly.
+GAME_STATE_ADDR = 0x857FEE0
 
 triple_addr = ""
 is_3ds = False
@@ -71,9 +72,6 @@ class N3DSAdapter:
         self.id = 0
         self.max_request_size = 32
         self.sock = None
-        # Set by _set_process() to the title id that was actually matched,
-        # e.g. so the caller can tell NA vs PAL apart after an auto-detect
-        # connect() call that was given multiple candidate title ids.
         self.connected_title_id = None
 
     def _max_read_size(self) -> int:
@@ -108,10 +106,6 @@ class N3DSAdapter:
         raise ConnectionError("Lost connection to game")
 
     async def _set_process(self, titles) -> bool:
-        # `titles` may be a single title id (int) or an iterable of
-        # acceptable title ids -- e.g. all known regions -- so we can
-        # match whichever region build is actually running instead of
-        # requiring the caller to guess the right one up front.
         if isinstance(titles, int):
             titles = {titles}
         else:
@@ -133,9 +127,6 @@ class N3DSAdapter:
                     entry = response[4 + i * 0x14 : 4 + (i + 1) * 0x14]
                     if len(entry) < 0x14:
                         break
-                    # Azahar/Citra process entries are laid out as:
-                    #   <proc_id: I, title_id: Q, proc_name: 8s>
-                    # for a total of 20 bytes (0x14).
                     proc_id, title_id, proc_name = struct.unpack("<IQ8s", entry)
                     proc_name = proc_name.rstrip(b"\x00").decode("ascii", errors="replace")
                     print(f"N3DSAdapter._set_process: candidate proc_id={proc_id} title_id={title_id:#x} process_name={proc_name!r} targets={[f'{t:#x}' for t in titles]}")
@@ -153,9 +144,6 @@ class N3DSAdapter:
                 return True
 
     async def connect(self, address: str, title) -> bool:
-        # `title` may be a single title id (int) or an iterable of
-        # candidate title ids to auto-detect the running region from
-        # (see _set_process()).
         try:
             self.disconnect()
         except Exception:
@@ -187,9 +175,6 @@ class N3DSAdapter:
                 pass
 
     async def read(self, address: int, size: int) -> bytes:
-        # NOTE: no address translation here. This adapter is used with real
-        # process addresses (e.g. from CTRPluginFramework), not
-        # BizHawk-relative FCRAM offsets.
         mem = b""
         while size > 0:
             request_size = min(size, self._max_read_size())
@@ -200,7 +185,6 @@ class N3DSAdapter:
         return mem
 
     async def write(self, address: int, data: bytes) -> None:
-        # See note in read() above -- no address translation here either.
         start = 0
         while start < len(data):
             end = min(start + self._max_write_size(), len(data))
@@ -217,7 +201,7 @@ class N3DSAdapter:
 
 # How long to wait after a save file is detected as loaded before we start
 # trusting game memory / sending items. Gives the game time to finish its
-# own loading/initialization so we don't write items too early.
+# own loading on 3ds so we don't write items too early.
 FILE_LOAD_SETTLE_DELAY = 10
 
 
@@ -433,13 +417,7 @@ class StandaloneMLDTClient:
             #logger.info("StandaloneMLDTClient.validate_rom: System Bus bytes=%s", rom_info[:16].hex())
             #logger.info("StandaloneMLDTClient.validate_rom: rom_info_len=%d first64=%s", len(rom_info), rom_info[:64].hex())
 
-            # These three byte strings are the known ROM header signatures for
-            # Dream Team. Variants 1 and 2 are both North America builds (they
-            # differ by a couple of bytes elsewhere in the header but share the
-            # same RAM layout); variant 3 is the PAL build. We wait for the full
-            # header read above to come back before we make any decision here,
-            # so we never guess an offset before we actually know which region
-            # (if any) we're looking at.
+
             na_variant_1 = bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 14 6E 00 1C 21 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 23 FF 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 1C FF 00 9F 00 24 24 37 04 E0 FD F1 22 EF 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00')
             na_variant_2 = bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 14 6E 00 24 21 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 09 FF 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 02 FF 00 9F 00 24 24 37 04 E0 FD F1 08 EF 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00')
             pal_variant_1 = bytes.fromhex('07 00 00 EB 2A 10 00 EB 57 12 00 EB 45 10 00 EB 65 02 00 FA 19 10 00 EB 3A 10 00 EB 5D 0F 00 EB 5A 0F 00 EA 14 00 9F E5 14 10 9F E5 00 20 A0 E3 01 00 50 E1 04 20 80 34 FC FF FF 3A 1E FF 2F E1 A8 24 6E 00 1C 31 71 00 7C B5 15 00 0C 00 1A 00 00 29 00 90 02 D0 61 00 08 18 80 1E 0B 4B 7B 44 69 46 01 90 28 00 00 F0 BE F8 05 00 00 2C 06 D0 69 46 01 98 80 1C 01 90 00 20 00 F0 C7 F8 A5 42 02 D3 00 20 C0 43 7C BD 28 00 7C BD AB 01 00 00 00 21 01 E0 49 1C 80 1C 02 88 00 2A FA D1 08 00 70 47 FF FF 70 47 C0 46 01 C0 8F E2 1C FF 2F E1 F7 B5 00 26 75 29 10 68 00 99 14 A5 11 D0 FD F1 FB FE 00 28 02 DA 40 42 11 A5 08 E0 00 99 09 68 8A 07 01 D5 0F A5 02 E0 49 07 04 D5 0E A5 01 26 01 E0 FD F1 F4 FE 00 9F 00 24 24 37 04 E0 FD F1 FA EE 30 31 39 55 64 1C 00 28 F8 D1 00 98 33 00')
@@ -457,13 +435,7 @@ class StandaloneMLDTClient:
             pal_dream_val, pal_real_val = DEATHLINK_BATTLE_VALUES[TITLE_IDS["P"]]
             fallback_dream_val, fallback_real_val = DEATHLINK_BATTLE_VALUES.get(detected_title_id, (na_dream_val, na_real_val))
 
-            # Get the header result first, then pick NA or PAL based on it.
-            # Only once we know the header didn't match either known region do
-            # we fall back to a default (NA), and never before this point.
-            # `ram_offset` (general save-block base) and `deathlink_ram_offset`
-            # (DeathLink struct base) are resolved together here since they're
-            # both keyed off the same detected region, but they are NOT the
-            # same offset from each other -- see DEATHLINK_RAM_OFFSETS.
+
             if rom_info in (na_variant_1, na_variant_2):
                 self.ram_offset = fallback_offset
                 self.deathlink_ram_offset = fallback_deathlink_offset
@@ -490,8 +462,6 @@ class StandaloneMLDTClient:
             print(f"Standalone validate_rom: adapter read failed: {e!r}")
             logger.warning("Standalone validate_rom: adapter read failed: %s", e)
             logger.debug("Standalone validate_rom: adapter read failed", exc_info=True)
-            # The header read itself failed, so there's no result to wait on -
-            # default straight to NA here too.
             fallback_title_id = getattr(ctx, "title_id", TITLE_IDS["E"])
             self.ram_offset = AZAHAR_RAM_OFFSETS.get(fallback_title_id, AZAHAR_RAM_OFFSETS[TITLE_IDS["E"]])
             self.deathlink_ram_offset = DEATHLINK_RAM_OFFSETS.get(fallback_title_id, DEATHLINK_RAM_OFFSETS[TITLE_IDS["E"]])
@@ -506,8 +476,7 @@ class StandaloneMLDTClient:
 
     async def process_deathlink(self, ctx, azahar_ram_offset: int) -> None:
         """Poll Mario/Luigi's alive state to send DeathLinks out, and apply any DeathLink
-        that was received from another player -- per ctx.death_link_mode.
-
+        that was received from another player
         Killing a bro on a received DeathLink isn't instant: a few seconds after he enters a
         battle, we force "hero wear" onto him and push his turn count to the kill threshold,
         and the game itself applies the kill on his next turn. If he flees or wins the battle
@@ -517,7 +486,6 @@ class StandaloneMLDTClient:
         with HP intact (e.g. right after fleeing) doesn't count. Once a kill lands, we restore
         whatever he had equipped before and make sure that death doesn't get echoed back out as
         a new DeathLink to send.
-
         Called every watcher pass while DeathLink is enabled and a save is loaded.
         """
         dream_battle_addr = azahar_ram_offset + DEATHLINK_DREAM_BATTLE_OFFSET
@@ -676,8 +644,7 @@ class StandaloneMLDTClient:
 
     async def _apply_deathlink_kill(self, ctx, in_dream_battle: bool, mario_alive: bool, luigi_alive,
                                      mario_wear_addr: int, luigi_wear_addr: int) -> None:
-        """Mark the appropriate bro(s) as owing a kill for a received DeathLink, per ctx.death_link_mode.
-
+        """Mark the appropriate bro(s) as owing a kill for a received DeathLink
         This only decides who owes a kill and records their pre-DeathLink wear so it can be
         restored later -- it does not write the wear/turn-count trigger itself. The "arm" step
         in process_deathlink() does that, every battle, until the kill actually lands.
@@ -776,6 +743,14 @@ class StandaloneMLDTClient:
                     self.file_loaded_time = None
                     #logger.debug("file_has_loaded read failed", exc_info=True)
 
+                try:
+                    game_state_byte = await ctx.interface.read(GAME_STATE_ADDR, 1)
+                    game_state = int.from_bytes(game_state_byte, byteorder='little')
+                    in_game = (game_state == 20)
+                except Exception:
+                    in_game = False
+                    #logger.debug("game_state read failed", exc_info=True)
+
                 items_ready = bool(
                     file_has_loaded
                     and self.file_loaded_time is not None
@@ -842,7 +817,7 @@ class StandaloneMLDTClient:
                     #logger.debug("Emulator/game not loaded; resetting stale block/shop scan state")
                     self.reset_state()
 
-                if file_has_loaded > 0:
+                if file_has_loaded > 0 and in_game:
                     if self.prev_data == 0:
                         self.current_items_received = int.from_bytes(await ctx.interface.read(azahar_item_count_low, 1), byteorder='little') + (
                             int.from_bytes(await ctx.interface.read(azahar_item_count_high, 1), byteorder='little') * 0x100
@@ -853,9 +828,7 @@ class StandaloneMLDTClient:
                         self.prev_data = (await ctx.interface.read(azahar_block_data_addr, int(0xA00/8)))
                         #logger.info("initial block_data at %#x: %s", azahar_block_data_addr, self.prev_data[:32].hex())
 
-                    # Always refresh the shop baseline when the game loads or the emulator
-                    # restarts. Reusing the previous shop bytes after a reconnect is what
-                    # makes the client miss every shop purchase even though block checks still work.
+
                     shop_enabled_byte = await ctx.interface.read(azahar_shop_enabled_addr, 1)
                     shop_enabled = int.from_bytes(shop_enabled_byte, byteorder='little') % 2
                     #logger.debug("shop init: shop_enabled_byte=%s shop_enabled=%s shop_on_before=%s prev_shop=%s", shop_enabled_byte.hex(), shop_enabled, self.shop_on, (self.prev_shop.hex() if isinstance(self.prev_shop, (bytes, bytearray)) else self.prev_shop))
@@ -874,98 +847,95 @@ class StandaloneMLDTClient:
                         self.shop_on = False
                         self.prev_shop = 0
 
-                # Read block and compare to prev_data to find new checks.
-                # Some of the raw memory bits are intentionally unused (-1 in the mapping)
-                # and must be ignored; otherwise a coin/flag bit with no AP location can
-                # poison the scan and make the state look stale after reconnects.
-                block_data = await ctx.interface.read(azahar_block_data_addr, int(0xA00/8))
-                #logger.debug("block_data first 32 bytes at %#x: %s", azahar_block_data_addr, block_data[:32].hex())
-                parsed_block_data = list(block_data)
-                parsed_prev_data = list(self.prev_data) if self.prev_data else [0] * len(parsed_block_data)
 
-                # Offline/replay scan: catch any location that's already flagged in game
-                # memory (e.g. collected while the client was closed, or while the AP
-                # server was disconnected) but that the server still thinks is missing.
-                # This runs every pass, like the shop scan below, so it self-corrects
-                # once ctx.missing_locations is (re)populated instead of relying on a
-                # single scan at connect time that can race the server handshake.
-                for byte in range(len(parsed_block_data)):
-                    if parsed_block_data[byte] == 0:
-                        continue
-                    for bit in range(8):
-                        if (parsed_block_data[byte] >> bit) % 2 == 0:
-                            continue
-                        location_id = (byte * 8) + bit
-                        if location_id >= len(self.location_names):
-                            continue
-                        location_name_val = self.location_names[location_id]
-                        if location_name_val <= -1 or location_name_val in self.block_sent_locations:
-                            continue
-                        if location_name_val in ctx.missing_locations:
-                            #logger.info("Detected offline location check in emulator: location_index=%d -> location_id=%s", location_id, location_name_val)
-                            await ctx.check_locations([location_name_val])
-                            self.block_sent_locations.add(location_name_val)
+                if in_game:
+                    block_data = await ctx.interface.read(azahar_block_data_addr, int(0xA00/8))
+                    #logger.debug("block_data first 32 bytes at %#x: %s", azahar_block_data_addr, block_data[:32].hex())
+                    parsed_block_data = list(block_data)
+                    parsed_prev_data = list(self.prev_data) if self.prev_data else [0] * len(parsed_block_data)
 
-                for b in range(len(parsed_block_data)):
-                    if parsed_block_data[b] != parsed_prev_data[b]:
+
+                    for byte in range(len(parsed_block_data)):
+                        if parsed_block_data[byte] == 0:
+                            continue
                         for bit in range(8):
-                            bit_to_update = (parsed_block_data[b] >> bit) % 2
-                            if bit_to_update != (parsed_prev_data[b] >> bit) % 2:
-                                location_id = (b * 8) + bit
-                                if location_id >= len(self.location_names):
-                                    continue
-                                location_name_val = self.location_names[location_id]
-                                if location_name_val > -1 and location_name_val not in self.block_sent_locations:
-                                    #logger.info("Detected location check in emulator: location_index=%d -> location_id=%s", location_id, location_name_val)
-                                    #logger.info("Location address: byte=%d bit=%d prev_byte=%s new_byte=%s", b, bit, format(parsed_prev_data[b], '#04x'), format(parsed_block_data[b], '#04x'))
-                                    #logger.info("Full block address: %#x", azahar_block_data_addr)
-                                    await ctx.check_locations([location_name_val])
-                                    self.block_sent_locations.add(location_name_val)
-
-                if self.shop_on:
-                    parsed_prev_shop = list(self.prev_shop) if self.prev_shop else [0] * 20
-                    shop_data = await ctx.interface.read(azahar_shop_data_addr, 20)
-                    parsed_shop_data = list(shop_data)
-
-                    # Replay any shop items that were already purchased while the client
-                    # was disconnected or offline. This is the key difference from the block
-                    # scan: the shop bytes remain set even after reconnect, so we must scan the
-                    # current state for any missing shop locations instead of waiting for a delta.
-                    for s in range(len(parsed_shop_data)):
-                        for bit in range(8):
-                            if (parsed_shop_data[s] >> bit) % 2 == 0:
+                            if (parsed_block_data[byte] >> bit) % 2 == 0:
                                 continue
-                            location_index = 3000 + (s * 8) + bit + 1
-                            if location_index in self.shop_sent_locations:
+                            location_id = (byte * 8) + bit
+                            if location_id >= len(self.location_names):
                                 continue
-                            if location_index in ctx.missing_locations:
-                                #logger.debug("Detected offline shop check in emulator: shop_index=%d byte=%d bit=%d", location_index, s, bit)
-                                await ctx.check_locations([location_index])
-                                self.shop_sent_locations.add(location_index)
+                            location_name_val = self.location_names[location_id]
+                            if location_name_val <= -1 or location_name_val in self.block_sent_locations:
+                                continue
+                            if location_name_val in ctx.missing_locations:
+                                #logger.info("Detected offline location check in emulator: location_index=%d -> location_id=%s", location_id, location_name_val)
+                                await ctx.check_locations([location_name_val])
+                                self.block_sent_locations.add(location_name_val)
 
-                    shop_delta = [
-                        (idx, parsed_prev_shop[idx], parsed_shop_data[idx])
-                        for idx in range(len(parsed_shop_data))
-                        if parsed_prev_shop[idx] != parsed_shop_data[idx]
-                    ]
-                    if shop_delta:
-                        #logger.debug("shop bytes changed: prev=%s new=%s deltas=%s", bytes(parsed_prev_shop).hex(), bytes(parsed_shop_data).hex(), shop_delta)
-                        self.shop_debug_counter += 1
-                    for s in range(len(parsed_shop_data)):
-                        if parsed_shop_data[s] != parsed_prev_shop[s]:
+                    for b in range(len(parsed_block_data)):
+                        if parsed_block_data[b] != parsed_prev_data[b]:
                             for bit in range(8):
-                                bit_to_update = (parsed_shop_data[s] >> bit) % 2
-                                if bit_to_update != (parsed_prev_shop[s] >> bit) % 2:
-                                    location_index = 3000 + (s * 8) + bit + 1
-                                    if location_index in self.shop_sent_locations:
+                                bit_to_update = (parsed_block_data[b] >> bit) % 2
+                                if bit_to_update != (parsed_prev_data[b] >> bit) % 2:
+                                    location_id = (b * 8) + bit
+                                    if location_id >= len(self.location_names):
                                         continue
-                                    logger.debug("Detected shop check in emulator: shop_index=%d byte=%d bit=%d prev_byte=%s new_byte=%s", location_index, s, bit, format(parsed_prev_shop[s], '#04x'), format(parsed_shop_data[s], '#04x'))
+                                    location_name_val = self.location_names[location_id]
+                                    if location_name_val > -1 and location_name_val not in self.block_sent_locations:
+                                        #logger.info("Detected location check in emulator: location_index=%d -> location_id=%s", location_id, location_name_val)
+                                        #logger.info("Location address: byte=%d bit=%d prev_byte=%s new_byte=%s", b, bit, format(parsed_prev_data[b], '#04x'), format(parsed_block_data[b], '#04x'))
+                                        #logger.info("Full block address: %#x", azahar_block_data_addr)
+                                        await ctx.check_locations([location_name_val])
+                                        self.block_sent_locations.add(location_name_val)
+
+                    if self.shop_on:
+                        parsed_prev_shop = list(self.prev_shop) if self.prev_shop else [0] * 20
+                        shop_data = await ctx.interface.read(azahar_shop_data_addr, 20)
+                        parsed_shop_data = list(shop_data)
+
+
+                        for s in range(len(parsed_shop_data)):
+                            for bit in range(8):
+                                if (parsed_shop_data[s] >> bit) % 2 == 0:
+                                    continue
+                                location_index = 3000 + (s * 8) + bit + 1
+                                if location_index in self.shop_sent_locations:
+                                    continue
+                                if location_index in ctx.missing_locations:
+                                    #logger.debug("Detected offline shop check in emulator: shop_index=%d byte=%d bit=%d", location_index, s, bit)
                                     await ctx.check_locations([location_index])
                                     self.shop_sent_locations.add(location_index)
-                    #if not shop_delta and self.shop_debug_counter % 20 == 0:
-                        #logger.debug("shop debug: shop_on=True, no byte delta detected, prev_shop=%s", bytes(parsed_prev_shop).hex())
+
+                        shop_delta = [
+                            (idx, parsed_prev_shop[idx], parsed_shop_data[idx])
+                            for idx in range(len(parsed_shop_data))
+                            if parsed_prev_shop[idx] != parsed_shop_data[idx]
+                        ]
+                        if shop_delta:
+                            #logger.debug("shop bytes changed: prev=%s new=%s deltas=%s", bytes(parsed_prev_shop).hex(), bytes(parsed_shop_data).hex(), shop_delta)
+                            self.shop_debug_counter += 1
+                        for s in range(len(parsed_shop_data)):
+                            if parsed_shop_data[s] != parsed_prev_shop[s]:
+                                for bit in range(8):
+                                    bit_to_update = (parsed_shop_data[s] >> bit) % 2
+                                    if bit_to_update != (parsed_prev_shop[s] >> bit) % 2:
+                                        location_index = 3000 + (s * 8) + bit + 1
+                                        if location_index in self.shop_sent_locations:
+                                            continue
+                                        logger.debug("Detected shop check in emulator: shop_index=%d byte=%d bit=%d prev_byte=%s new_byte=%s", location_index, s, bit, format(parsed_prev_shop[s], '#04x'), format(parsed_shop_data[s], '#04x'))
+                                        await ctx.check_locations([location_index])
+                                        self.shop_sent_locations.add(location_index)
+                        #if not shop_delta and self.shop_debug_counter % 20 == 0:
+                            #logger.debug("shop debug: shop_on=True, no byte delta detected, prev_shop=%s", bytes(parsed_prev_shop).hex())
+                    #else:
+                        #logger.debug("shop debug: shop_on=False, skipping shop scan")
+
+                    # update prevs
+                    self.prev_data = block_data
+                    if self.shop_on:
+                        self.prev_shop = shop_data
                 #else:
-                    #logger.debug("shop debug: shop_on=False, skipping shop scan")
+                    #logger.debug("in_game is False (title/menu/giant battle); skipping block/shop scan this pass")
 
                 # report when Dreamy Bowser has been beaten.
                 has_goaled = (int.from_bytes(await ctx.interface.read(azahar_goal_addr, 1), byteorder='little') >> 1) % 2
@@ -985,11 +955,6 @@ class StandaloneMLDTClient:
                     except Exception as e:
                         logger.info(f"DeathLink processing error: {e!r}")
                         logger.debug("DeathLink processing error (full traceback)", exc_info=True)
-
-                # update prevs
-                self.prev_data = block_data
-                if self.shop_on:
-                    self.prev_shop = shop_data
 
             except ConnectionError:
                 logger.warning("Lost connection to game; resetting watch state and waiting for reconnect")
@@ -1013,7 +978,7 @@ class StandaloneMLDTClient:
                 ctx.initial_delay = True
                 ctx.connect_notice_shown = False
                 raise
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.4)
 
 # TITLE IDs for Dream Team variants (hex strings in patcher)
 TITLE_IDS = {
@@ -1098,9 +1063,6 @@ async def game_watcher(ctx: MLDTClientContext, title_id, connect_addr: str) -> N
                 ctx.interface.disconnect()
 
             if not ctx.interface_connected:
-                # Rebuild the game watcher snapshot on every fresh emulator connection.
-                # This prevents stale `prev_shop` and `shop_on` data from surviving after
-                # Azahar is closed and reopened with the client still running.
                 handler.reset_state()
                 if triple_addr != "":
                     if await ctx.interface.connect(triple_addr, title_id):
@@ -1144,10 +1106,7 @@ async def game_watcher(ctx: MLDTClientContext, title_id, connect_addr: str) -> N
                 await asyncio.sleep(delay)
                 ctx.initial_delay = False
 
-            # validate_rom always waits for the header read and sets
-            # handler.ram_offset itself (NA, PAL, or a NA default if neither
-            # matched) before returning, so there's nothing left to default
-            # here afterward.
+
             await handler.validate_rom(ctx)
 
             try:
