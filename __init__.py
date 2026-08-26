@@ -1,9 +1,4 @@
-try:
-    from worlds.LauncherComponents import Component, Type, components, launch_subprocess, icon_paths
-except ModuleNotFoundError:
-    Component = Type = None
-    components = []
-    icon_paths = None  
+from worlds.LauncherComponents import Component, Type, components, launch_subprocess, icon_paths
 
 if Component is not None and Type is not None:
     def launch_client(*args):
@@ -12,15 +7,15 @@ if Component is not None and Type is not None:
 
 
     if icon_paths is not None:
-        icon_paths["mldticon"] = f"ap:{__name__}/data/mldticon.png"
+        icon_paths["mldticon2"] = f"ap:{__name__}/data/mldticon2.png"
 
 
     components.append(
         Component(
-            "Mario & Luigi Dream Team Client",
+            "Mario & Luigi Dream Team Client. Nightly Version",
             func=launch_client,
             component_type=Type.CLIENT,
             description="Secondary client for Mario & Luigi Dream team.",
-            icon="mldticon"
+            icon="mldticon2"
         )
     )
