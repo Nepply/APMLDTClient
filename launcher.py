@@ -263,6 +263,100 @@ class MLDTCommandProcessor(ClientCommandProcessor):
         self.output(f"DeathLink mode set to '{mode}'. Tags are now {sorted(self.ctx.tags)}.")
         return True
 
+    def _cmd_debug(self, subcommand: str = "", value: str = ""):
+        """Debug tools. Usage: /debug setitemcount [number]  |  /debug unfreeze"""
+        subcommand = subcommand.strip().lower()
+
+        if subcommand == "":
+            self.output("Debug commands:")
+            self.output("  /debug setitemcount [number] - set the game's received-item counter to "
+                        "[number]. Without a number, reports how many items Archipelago has to send "
+                        "vs. what the game currently shows. For debug purposes only, please do not use.")
+            self.output("  /debug unfreeze               - reset the item-write flag. Use this if "
+                        "receiving an item (e.g. an attack piece beyond what the game has room for) "
+                        "froze the game.")
+            return True
+
+        handler = getattr(self.ctx, "mldt_handler", None)
+        if handler is None or not getattr(self.ctx, "interface_connected", False) or not handler.ram_offset:
+            self.output("Not connected to the game yet -- can't run debug commands.")
+            return False
+
+        if subcommand == "setitemcount":
+            low_addr = handler.ram_offset + 0x43C + 0x4D
+            high_addr = handler.ram_offset + 0x43C + 0x4E
+
+            if value.strip() == "":
+                async_start(
+                    _debug_report_itemcount(self.ctx, handler, low_addr, high_addr, self.output),
+                    name="debug_report_itemcount",
+                )
+                return True
+
+            try:
+                count = int(value.strip())
+            except ValueError:
+                self.output(f"'{value}' isn't a valid whole number.")
+                return False
+
+            if not (0 <= count <= 0xFFFF):
+                self.output("Item count has to be between 0 and 65535.")
+                return False
+
+            async_start(
+                _debug_set_itemcount(self.ctx, handler, low_addr, high_addr, count, self.output),
+                name="debug_set_itemcount",
+            )
+            return True
+
+        if subcommand == "unfreeze":
+            write_addr = handler.ram_offset + 0x43C + 0x51
+            async_start(_debug_unfreeze(self.ctx, handler, write_addr, self.output), name="debug_unfreeze")
+            return True
+
+        self.output(f"Unknown debug command '{subcommand}'. Use /debug for the list of commands.")
+        return False
+
+
+async def _debug_report_itemcount(ctx, handler, low_addr: int, high_addr: int, output) -> None:
+    """Report how many items Archipelago has to send."""
+    total_to_send = len(ctx.items_received)
+    try:
+        game_low = int.from_bytes(await ctx.interface.read(low_addr, 1), byteorder='little')
+        game_high = int.from_bytes(await ctx.interface.read(high_addr, 1), byteorder='little')
+        game_count = game_low + game_high * 0x100
+        output(
+            f"Archipelago has {total_to_send} item(s) to send this session. "
+            f"Your save currently shows {game_count} received (client-tracked count: {handler.current_items_received})."
+        )
+    except Exception:
+        logger.debug("Debug: failed to read in-game item count", exc_info=True)
+        output(f"Archipelago has {total_to_send} item(s) to send this session. "
+               f"(Couldn't read the in-game count right now.)")
+
+
+async def _debug_set_itemcount(ctx, handler, low_addr: int, high_addr: int, count: int, output) -> None:
+    """Write `count` into the game's received-item counter (low byte + high byte * 0x100)."""
+    try:
+        await ctx.interface.write(low_addr, bytes([count % 0x100]))
+        await ctx.interface.write(high_addr, bytes([count // 0x100]))
+        handler.current_items_received = count
+        logger.info("Debug: set in-game received item count to %d.", count)
+        output(f"Set the item count to {count}.")
+    except Exception:
+        logger.warning("Debug: failed to write item count %d to the game.", count, exc_info=True)
+        output(f"Failed to write {count} to the game -- try again.")
+
+
+async def _debug_unfreeze(ctx, handler, write_addr: int, output) -> None:
+    """Reset the item-write address to 0, clearing a freeze caused by an out-of-range (attack piece) received item."""
+    try:
+        await ctx.interface.write(write_addr, bytes([0]))
+        logger.info("Debug: item-write address reset to 0.")
+        output("Item-write address reset to 0.")
+    except Exception:
+        logger.warning("Debug: failed to reset the item-write address.", exc_info=True)
+        output("Failed to reset the item-write address -- try again.")
 
 
 class StandaloneMLDTClient:
@@ -751,13 +845,24 @@ class StandaloneMLDTClient:
                     and (time.time() - self.file_loaded_time) >= FILE_LOAD_SETTLE_DELAY
                 )
 
-                if items_ready:
+                if items_ready and in_game:
                     try:
                         game_received_count = int.from_bytes(await ctx.interface.read(azahar_item_count_low, 1), byteorder='little') + (
                             int.from_bytes(await ctx.interface.read(azahar_item_count_high, 1), byteorder='little') * 0x100
                         )
                         if game_received_count > self.current_items_received:
                             self.current_items_received = game_received_count
+                        elif game_received_count < self.current_items_received:
+                            logger.info(
+                                "Detected save reload (item counter dropped from %d to %d); resyncing",
+                                self.current_items_received, game_received_count,
+                            )
+                            self.current_items_received = game_received_count
+                            self.prev_data = 0
+                            self.prev_shop = 0
+                            self.shop_on = False
+                            self.block_sent_locations = set()
+                            self.shop_sent_locations = set()
                         elif self.current_items_received > len(ctx.items_received):
                             self.current_items_received = len(ctx.items_received)
                     except Exception:
@@ -766,44 +871,38 @@ class StandaloneMLDTClient:
                     if self.current_items_received > len(ctx.items_received):
                         self.current_items_received = len(ctx.items_received)
                     #logger.debug("item write check: current_items_received=%s len(items_received)=%s receive_buffer=%s", self.current_items_received, len(ctx.items_received), self.receive_buffer)
-                    if self.current_items_received != len(ctx.items_received):
+                    if self.current_items_received != len(ctx.items_received) and self.receive_buffer == 0:
                         new_items = ctx.items_received
-                        for n in range(len(new_items) - self.current_items_received):
-                            rn = n + self.current_items_received
-                            if self.receive_buffer == 0:
-                                to_write = 0
-                                if new_items[rn].item > 23 and new_items[rn].item < 239:
-                                    to_write = new_items[rn].item - 23
-                                elif new_items[rn].item < 239:
-                                    to_write = new_items[rn].item + 215
-                                else:
-                                    to_write = new_items[rn].item
-                                #logger.debug("Writing item %s -> emulator (to_write=%s)", new_items[rn].item, to_write)
-                                #logger.debug("item write targets: addr=%#x count_low=%#x count_high=%#x", azahar_item_write_addr, azahar_item_count_low, azahar_item_count_high)
-                                #logger.debug("Attempting write: addr=%#x data=%s", azahar_item_write_addr, bytes([to_write]).hex())
-                                # read-before for diagnostics
-                                #try:
-                                    #before = await ctx.interface.read(azahar_item_write_addr, 1)
-                                    #logger.debug("Before write at %#x: %s", azahar_item_write_addr, before.hex())
-                                #except Exception:
-                                    #logger.debug("Read-before failed", exc_info=True)
-                                await ctx.interface.write(azahar_item_write_addr, bytes([to_write]))
-                                # verify write by reading back
-                                #try:
-                                    #read_back = await ctx.interface.read(azahar_item_write_addr, 1)
-                                    #logger.info("Wrote %s to %#x, read-back=%s", to_write, azahar_item_write_addr, read_back.hex())
-                                #except Exception:
-                                    #logger.debug("Read-back failed after write", exc_info=True)
-                                self.current_items_received += 1
-                                await ctx.interface.write(azahar_item_count_low, bytes([self.current_items_received % 0x100]))
-                                await ctx.interface.write(azahar_item_count_high, bytes([self.current_items_received // 0x100]))
-                                self.receive_buffer = 2
+                        rn = self.current_items_received
+                        to_write = 0
+                        if new_items[rn].item > 23 and new_items[rn].item < 239:
+                            to_write = new_items[rn].item - 23
+                        elif new_items[rn].item < 239:
+                            to_write = new_items[rn].item + 215
+                        else:
+                            to_write = new_items[rn].item
+                        #logger.debug("Writing item %s -> emulator (to_write=%s)", new_items[rn].item, to_write)
+                        await ctx.interface.write(azahar_item_write_addr, bytes([to_write]))
 
-                    # Handle cooldown / buffer
+                        read_back = int.from_bytes(await ctx.interface.read(azahar_item_write_addr, 1), byteorder='little')
+                        if read_back == to_write:
+                            self.receive_buffer = 1
+                        elif read_back == 0:
+                            self.current_items_received += 1
+                            await ctx.interface.write(azahar_item_count_low, bytes([self.current_items_received % 0x100]))
+                            await ctx.interface.write(azahar_item_count_high, bytes([self.current_items_received // 0x100]))
+                            self.receive_buffer = 0
+                        #else:
+                            #logger.debug("Item write did not land (read-back mismatch); retrying next tick")
+
+
                     if self.receive_buffer > 0:
                         has_been_reset = int.from_bytes(await ctx.interface.read(azahar_item_write_addr, 1), byteorder='little')
                         if has_been_reset == 0:
-                            self.receive_buffer -= 1
+                            self.current_items_received += 1
+                            await ctx.interface.write(azahar_item_count_low, bytes([self.current_items_received % 0x100]))
+                            await ctx.interface.write(azahar_item_count_high, bytes([self.current_items_received // 0x100]))
+                            self.receive_buffer = 0
                 #else:
                     #logger.debug("Save file not yet settled; holding off on item sync")
 
@@ -1048,6 +1147,7 @@ async def game_watcher(ctx: MLDTClientContext, title_id, connect_addr: str) -> N
     """
     global triple_addr, is_3ds
     handler = StandaloneMLDTClient()
+    ctx.mldt_handler = handler
     while not ctx.exit_event.is_set():
         try:
             ctx.invalid = False
