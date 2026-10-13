@@ -63,7 +63,7 @@ class N3DSAdapter:
     - process selection and read/write semantics
     """
 
-    PACKET_VERSION: int = 1
+    PACKET_VERSION: int = 2
     HEADER_SIZE: int = 0x10
     MAX_PACKET_SIZE: int = 0x410
     TIMEOUT: float = 1.0
@@ -611,13 +611,13 @@ class StandaloneMLDTClient:
         # A death-flag flip alone isn't trustworthy -- fleeing a battle can trip it
         # momentarily even though the bro is fine. Only treat him as dead once both the
         # flag says so *and* his HP has actually hit 0.
-        mario_alive = not (mario_dead_flag and mario_hp == 0)
+        mario_alive = not (in_battle and mario_dead_flag and mario_hp == 0)
         if in_dream_battle:
             luigi_alive = None
         else:
             luigi_dead_flag = int.from_bytes(await ctx.interface.read(luigi_dead_addr, 1), byteorder='little') == 0
             luigi_hp = int.from_bytes(await ctx.interface.read(luigi_hp_addr, 2), byteorder='little')
-            luigi_alive = not (luigi_dead_flag and luigi_hp == 0)
+            luigi_alive = not (in_battle and luigi_dead_flag and luigi_hp == 0)
 
         # Track when the current battle started, so the arm step below can hold off
         # writing wear/turn for a few seconds after a battle begins.
@@ -638,13 +638,13 @@ class StandaloneMLDTClient:
         mario_kill_just_landed = False
         luigi_kill_just_landed = False
         if self.death_link_pending_wear_revert_mario is not None and not mario_alive:
-            await ctx.interface.write(mario_wear_addr, bytes([self.death_link_pending_wear_revert_mario]))
+            if self.death_link_pending_wear_revert_mario != -1: await ctx.interface.write(mario_wear_addr, bytes([self.death_link_pending_wear_revert_mario]))
             self.death_link_pending_wear_revert_mario = None
             self.death_link_armed_this_encounter_mario = False
             mario_kill_just_landed = True
             #logger.info("DeathLink: Mario's triggered kill landed -- restored his equipment.")
         if not in_dream_battle and self.death_link_pending_wear_revert_luigi is not None and luigi_alive is False:
-            await ctx.interface.write(luigi_wear_addr, bytes([self.death_link_pending_wear_revert_luigi]))
+            if self.death_link_pending_wear_revert_luigi != -1: await ctx.interface.write(luigi_wear_addr, bytes([self.death_link_pending_wear_revert_luigi]))
             self.death_link_pending_wear_revert_luigi = None
             self.death_link_armed_this_encounter_luigi = False
             luigi_kill_just_landed = True
@@ -672,6 +672,7 @@ class StandaloneMLDTClient:
         )
         if self.death_link_pending_wear_revert_mario is not None and mario_alive and in_battle \
                 and battle_settled and not self.death_link_armed_this_encounter_mario:
+            if self.death_link_pending_wear_revert_mario == -1: self.death_link_pending_wear_revert_mario = (await ctx.interface.read(mario_wear_addr, 1))[0]
             await ctx.interface.write(mario_wear_addr, bytes([DEATHLINK_HERO_WEAR_VALUE]))
             await ctx.interface.write(mario_turn_addr, bytes([DEATHLINK_KILL_TURN_COUNT]))
             self.death_link_armed_this_encounter_mario = True
@@ -679,6 +680,7 @@ class StandaloneMLDTClient:
                 logger.info("DeathLink debug: (re-)armed Mario's kill for this battle")
         if not in_dream_battle and self.death_link_pending_wear_revert_luigi is not None and luigi_alive and in_battle \
                 and battle_settled and not self.death_link_armed_this_encounter_luigi:
+            if self.death_link_pending_wear_revert_luigi == -1: self.death_link_pending_wear_revert_luigi = (await ctx.interface.read(luigi_wear_addr, 1))[0]
             await ctx.interface.write(luigi_wear_addr, bytes([DEATHLINK_HERO_WEAR_VALUE]))
             await ctx.interface.write(luigi_turn_addr, bytes([DEATHLINK_KILL_TURN_COUNT]))
             self.death_link_armed_this_encounter_luigi = True
@@ -759,13 +761,13 @@ class StandaloneMLDTClient:
 
 
         if kill_mario and mario_alive and self.death_link_pending_wear_revert_mario is None:
-            original_wear = (await ctx.interface.read(mario_wear_addr, 1))[0]
+            original_wear = -1
             self.death_link_pending_wear_revert_mario = original_wear
         else:
             kill_mario = False
 
         if kill_luigi and not in_dream_battle and luigi_alive and self.death_link_pending_wear_revert_luigi is None:
-            original_wear = (await ctx.interface.read(luigi_wear_addr, 1))[0]
+            original_wear = -1
             self.death_link_pending_wear_revert_luigi = original_wear
         else:
             kill_luigi = False
