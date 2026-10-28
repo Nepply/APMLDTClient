@@ -63,7 +63,7 @@ class N3DSAdapter:
     - process selection and read/write semantics
     """
 
-    PACKET_VERSION: int = 2
+    packet_version: int
     HEADER_SIZE: int = 0x10
     MAX_PACKET_SIZE: int = 0x410
     TIMEOUT: float = 1.0
@@ -87,7 +87,7 @@ class N3DSAdapter:
             try:
                 request_id = self.id
                 self.id = (self.id + 1) & 0xffffffff
-                request = struct.pack("=IIII", self.PACKET_VERSION, request_id, request_type, len(request_data))
+                request = struct.pack("=IIII", self.packet_version, request_id, request_type, len(request_data))
                 request += request_data
                 await asyncio.wait_for(loop.sock_sendall(self.sock, request), self.TIMEOUT)
                 for _ in range(16):
@@ -99,7 +99,7 @@ class N3DSAdapter:
                     except Exception as e:
                         logger.debug("_send_packet: bad header unpack: %s", e)
                         continue
-                    if version == self.PACKET_VERSION and id == request_id and response_type == request_type:
+                    if version == self.packet_version and id == request_id and response_type == request_type:
                         return response[self.HEADER_SIZE:]
             except Exception:
                 continue
@@ -161,11 +161,20 @@ class N3DSAdapter:
                 port = 45987
         self.sock.connect((host, port))
         self.sock.setblocking(False)
-        try:
-            await self._send_packet(0, b"", 0)
-            return await self._set_process(title)
-        except ConnectionError:
-            return False
+        self.packet_version = 2
+        while self.packet_version > 0:
+            try:
+                if host == "127.0.0.1":
+                    response = await self._send_packet(4, struct.pack("=II", 0, 0), 4)
+                    if response:
+                        return await self._set_process(title)
+                else:
+                    await self._send_packet(0, b"", 0)
+                    return await self._set_process(title)
+            except ConnectionError:
+                pass
+            self.packet_version -= 1
+        return False
 
     def disconnect(self):
         if hasattr(self, 'sock') and self.sock:
@@ -1125,6 +1134,14 @@ class MLDTClientContext(CommonContext):
         self.death_link_mode = "off"  # off, gameover, randombro, singlebro -- set via /deathlink
         self.death_link_debug = False  # set via /deathlink debug
         self.pending_deathlink_kill = False  # set by on_deathlink(); consumed by the game watcher
+
+    def make_gui(self):
+        from kvui import GameManager
+
+        class MLDTGameManager(GameManager):
+            base_title = "Mario & Luigi: Dream Team Azahar/3ds Client"
+
+        return MLDTGameManager
 
     def on_deathlink(self, data: dict) -> None:
         #logger.info(f"DeathLink: packet received from server (mode={self.death_link_mode}): {data}")
